@@ -1,13 +1,28 @@
 import streamlit as st
 import pandas as pd
 import os
+from sqlalchemy import create_engine, text
+from dotenv import load_dotenv
 from datetime import datetime
+
+load_dotenv()
+
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+engine = create_engine(
+    DATABASE_URL,
+    pool_pre_ping=True
+)
+
+try:
+    with engine.connect() as conn:
+        st.success("✅ Database Connected")
+except Exception as e:
+    st.error(f"Database Connection Failed: {e}")
 
 # ==================================================
 # CONFIGURATION
 # ==================================================
-CSV_FILE = "WI_paper_roll_usage.csv"
-STOCK_FILE = "WI_paper_roll_stock.txt"
 LOW_STOCK_THRESHOLD = 10
 
 # ==================================================
@@ -20,7 +35,7 @@ st.set_page_config(
 )
 
 # ==================================================
-# CUSTOM CSS
+# CUSTOM CS
 # ==================================================
 st.markdown("""
 <style>
@@ -44,54 +59,54 @@ h1,h2,h3 {
 </style>
 """, unsafe_allow_html=True)
 
+
 # ==================================================
-# INITIAL FILE CREATION
+# STOCK FUNCTIONS
 # ==================================================
-def initialize_files():
-
-    if not os.path.exists(CSV_FILE):
-
-        df = pd.DataFrame(columns=[
-            "Date",
-            "Employee Name",
-            "Terminal Location",
-            "Paper Rolls Used",
-            "Remaining Stock"
-        ])
-
-        df.to_csv(CSV_FILE, index=False)
-
-    if not os.path.exists(STOCK_FILE):
-
-        with open(STOCK_FILE, "w") as f:
-            f.write("100")
-
 
 # ==================================================
 # STOCK FUNCTIONS
 # ==================================================
 def get_stock():
 
-    with open(STOCK_FILE, "r") as f:
-        return int(f.read())
+    query = """
+    SELECT current_stock
+    FROM stock
+    WHERE id = 1
+    """
+
+    stock_df = pd.read_sql(query, engine)
+    if df.empty:
+        total_used = 0
+    else:
+        total_used = df["Paper Rolls Used"].sum()
+
+    return int(stock_df.iloc[0]["current_stock"])
 
 
 def update_stock(stock):
 
-    with open(STOCK_FILE, "w") as f:
-        f.write(str(stock))
+    with engine.begin() as conn:
+
+        conn.execute(
+            text("""
+                UPDATE stock
+                SET current_stock = :stock
+                WHERE id = 1
+            """),
+            {"stock": stock}
+        )
 
 
 # ==================================================
-# INITIALIZE
-# ==================================================
-initialize_files()
 
 # ==================================================
 # LOAD DATA
 # ==================================================
-df = pd.read_csv(CSV_FILE)
-
+df = pd.read_sql(
+    'SELECT * FROM "Inventory"',
+    engine
+)
 current_stock = get_stock()
 
 if df.empty:
@@ -100,6 +115,7 @@ else:
     total_used = df["Paper Rolls Used"].sum()
 
 # ==================================================
+current_stock = get_stock()
 # HEADER
 # ==================================================
 st.markdown("""
@@ -246,25 +262,18 @@ with left:
                     ]
                 })
 
-                existing = pd.read_csv(CSV_FILE)
-
-                updated = pd.concat(
-                    [existing, record],
-                    ignore_index=True
-                )
-
-                updated.to_csv(
-                    CSV_FILE,
+                record.to_sql(
+                    "Inventory",
+                    engine,
+                    if_exists="append",
                     index=False
                 )
 
                 st.success(
                     "✅ Usage Record Saved"
                 )
+                st.rerun()
 
-                # OPTIONAL SUCCESS SOUND
-                if os.path.exists("success.mp3"):
-                    st.audio("success.mp3")
 
 # ==================================================
 # ADD STOCK
@@ -293,10 +302,8 @@ with right:
         st.success(
             f"✅ {stock_to_add} rolls added successfully"
         )
+        st.rerun()
 
-        # OPTIONAL SOUND
-        if os.path.exists("stockadded.mp3"):
-            st.audio("stockadded.mp3")
 
 st.divider()
 
@@ -347,13 +354,11 @@ if not df.empty:
 # ==================================================
 # DOWNLOAD REPORT
 # ==================================================
-st.divider()
+csv_data = df.to_csv(index=False).encode("utf-8")
 
-with open(CSV_FILE, "rb") as file:
-
-    st.download_button(
-        label="📥 Download Usage Report",
-        data=file,
-        file_name="WI_paper_roll_usage.csv",
-        mime="text/csv"
-    )
+st.download_button(
+    label="📥 Download Usage Report",
+    data=csv_data,
+    file_name="WI_paper_roll_usage.csv",
+    mime="text/csv"
+)
