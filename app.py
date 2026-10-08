@@ -1,33 +1,14 @@
 import streamlit as st
 import pandas as pd
 import os
+import plotly.express as px
 from sqlalchemy import create_engine, text
 from dotenv import load_dotenv
-from datetime import datetime
-
-load_dotenv()
-
-DATABASE_URL = os.getenv("DATABASE_URL")
-
-engine = create_engine(
-    DATABASE_URL,
-    pool_pre_ping=True
-)
-
-try:
-    with engine.connect() as conn:
-        st.success("✅ Database Connected")
-except Exception as e:
-    st.error(f"Database Connection Failed: {e}")
-
-# ==================================================
-# CONFIGURATION
-# ==================================================
-LOW_STOCK_THRESHOLD = 10
 
 # ==================================================
 # PAGE CONFIG
 # ==================================================
+
 st.set_page_config(
     page_title="Paper Roll Inventory Tracker",
     page_icon="📦",
@@ -35,38 +16,102 @@ st.set_page_config(
 )
 
 # ==================================================
-# CUSTOM CS
+# LOAD ENV
 # ==================================================
+
+load_dotenv()
+
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+if not DATABASE_URL:
+    st.error("DATABASE_URL not found.")
+    st.stop()
+
+# ==================================================
+# DATABASE
+# ==================================================
+
+@st.cache_resource
+def get_engine():
+    return create_engine(
+        DATABASE_URL,
+        pool_pre_ping=True,
+        pool_recycle=300
+    )
+
+engine = get_engine()
+
+try:
+    with engine.connect():
+        pass
+except Exception as e:
+    st.error(f"Database Connection Failed: {e}")
+    st.stop()
+
+# ==================================================
+# CONFIG
+# ==================================================
+
+LOW_STOCK_THRESHOLD = 10
+MAX_STOCK = 40
+
+# ==================================================
+# CSS
+# ==================================================
+
 st.markdown("""
 <style>
 
-.stApp {
-    background-color: #0E1117;
+.stApp{
+    background:#0B1120;
 }
 
-[data-testid="metric-container"] {
-    background-color: #262730;
-    border: 1px solid #444;
-    padding: 15px;
-    border-radius: 15px;
-    text-align: center;
+.block-container{
+    padding-top:1rem;
 }
 
-h1,h2,h3 {
-    color: white;
+[data-testid="metric-container"]{
+    background:linear-gradient(
+    135deg,
+    #1E293B,
+    #334155
+    );
+
+    border-radius:20px;
+    padding:20px;
+
+    box-shadow:
+    0 4px 10px rgba(0,0,0,.4);
+}
+
+h1,h2,h3{
+    color:white;
 }
 
 </style>
 """, unsafe_allow_html=True)
 
+# ==================================================
+# FUNCTIONS
+# ==================================================
 
-# ==================================================
-# STOCK FUNCTIONS
-# ==================================================
+@st.cache_data(ttl=60)
+def load_inventory():
 
-# ==================================================
-# STOCK FUNCTIONS
-# ==================================================
+    query = """
+    SELECT
+        "Date",
+        "Employee Name",
+        "Terminal Location",
+        "Paper Rolls Used",
+        "Remaining Stock"
+    FROM "Inventory"
+    ORDER BY "Date" DESC
+    """
+
+    return pd.read_sql(query, engine)
+
+
 def get_stock():
 
     query = """
@@ -75,68 +120,117 @@ def get_stock():
     WHERE id = 1
     """
 
-    stock_df = pd.read_sql(query, engine)
-    if df.empty:
-        total_used = 0
-    else:
-        total_used = df["Paper Rolls Used"].sum()
+    stock_df = pd.read_sql(
+        query,
+        engine
+    )
 
-    return int(stock_df.iloc[0]["current_stock"])
+    if stock_df.empty:
+        return 0
+
+    return int(
+        stock_df.iloc[0]["current_stock"]
+    )
 
 
-def update_stock(stock):
+def update_stock(new_stock):
 
     with engine.begin() as conn:
 
         conn.execute(
             text("""
-                UPDATE stock
-                SET current_stock = :stock
-                WHERE id = 1
+            UPDATE stock
+            SET current_stock = :stock
+            WHERE id = 1
             """),
-            {"stock": stock}
+            {"stock": new_stock}
         )
 
 
 # ==================================================
-
-# ==================================================
 # LOAD DATA
 # ==================================================
-df = pd.read_sql(
-    '''
-    SELECT
-        "Date",
-        "Employee Name",
-        "Terminal Location",
-        "Paper Rolls Used",
-        "Remaining Stock"
-    FROM "Inventory"
-    ''',
-    engine
-)
+
+df = load_inventory()
+
 current_stock = get_stock()
 
 if df.empty:
     total_used = 0
 else:
-    total_used = df["Paper Rolls Used"].sum()
+    total_used = int(
+        df["Paper Rolls Used"].sum()
+    )
 
 # ==================================================
-current_stock = get_stock()
+# BANNER
+# ==================================================
+
+if os.path.exists("assets/banner.png"):
+    st.image(
+        "assets/banner.png",
+        use_container_width=True
+    )
+
+# ==================================================
 # HEADER
 # ==================================================
-st.markdown("""
-<h1 style='text-align:center'>
-📦 Wisconsin Paper Roll Inventory Tracker
-</h1>
-""", unsafe_allow_html=True)
+
+col_logo, col_title = st.columns([1,5])
+
+with col_logo:
+
+    if os.path.exists("assets/logo.png"):
+        st.image(
+            "assets/logo.png",
+            width=120
+        )
+
+with col_title:
+
+    st.markdown("""
+    # 📦 Wisconsin Paper Roll Inventory Tracker
+    ### Real-Time Inventory Monitoring Dashboard
+    """)
 
 st.divider()
 
 # ==================================================
+# STATUS IMAGE
+# ==================================================
+
+img1, img2, img3 = st.columns([1,2,1])
+
+with img2:
+
+    if current_stock > 20:
+
+        if os.path.exists("assets/healthy.png"):
+            st.image(
+                "assets/healthy.png",
+                use_container_width=True
+            )
+
+    elif current_stock > 10:
+
+        if os.path.exists("assets/warning.png"):
+            st.image(
+                "assets/warning.png",
+                use_container_width=True
+            )
+
+    else:
+
+        if os.path.exists("assets/critical.png"):
+            st.image(
+                "assets/critical.png",
+                use_container_width=True
+            )
+
+# ==================================================
 # DASHBOARD
 # ==================================================
+
 col1, col2, col3, col4 = st.columns(4)
 
 with col1:
@@ -148,7 +242,7 @@ with col1:
 with col2:
     st.metric(
         "Total Used",
-        int(total_used)
+        total_used
     )
 
 with col3:
@@ -159,27 +253,42 @@ with col3:
 
 with col4:
 
-    avg_daily = total_used / 30 if total_used > 0 else 0
+    avg_daily = total_used / 30 if total_used else 0
 
-    days_left = int(current_stock / avg_daily) if avg_daily > 0 else 0
+    days_left = (
+        int(current_stock / avg_daily)
+        if avg_daily > 0
+        else 0
+    )
 
     st.metric(
         "Est. Days Left",
         days_left
     )
 
+stock_percentage = min(
+    (current_stock / MAX_STOCK) * 100,
+    100
+)
+
+st.progress(int(stock_percentage))
+
+st.caption(
+    f"{stock_percentage:.0f}% stock available"
+)
+
 # ==================================================
-# ALERT SECTION
+# ALERT
 # ==================================================
+
 if current_stock <= LOW_STOCK_THRESHOLD:
 
     st.error(
         f"⚠ LOW STOCK ALERT! ONLY {current_stock} ROLLS REMAINING!"
     )
 
-    # OPTIONAL SOUND
-    if os.path.exists("warning.mp3"):
-        st.audio("warning.mp3")
+    if os.path.exists("assets/warning.mp3"):
+        st.audio("assets/warning.mp3")
 
 else:
 
@@ -190,13 +299,15 @@ else:
 st.divider()
 
 # ==================================================
-# MAIN SECTIONS
+# FORMS
 # ==================================================
+
 left, right = st.columns(2)
 
 # ==================================================
 # ADD USAGE
 # ==================================================
+
 with left:
 
     st.subheader("📝 Add Usage Record")
@@ -233,6 +344,13 @@ with left:
 
         if submit_usage:
 
+            if not employee.strip():
+
+                st.error(
+                    "Employee Name is required"
+                )
+                st.stop()
+
             stock = get_stock()
 
             if rolls_used > stock:
@@ -245,27 +363,29 @@ with left:
 
                 remaining_stock = stock - rolls_used
 
-                update_stock(remaining_stock)
+                update_stock(
+                    remaining_stock
+                )
 
                 record = pd.DataFrame({
 
-                    "Date": [
+                    "Date":[
                         date.strftime("%Y-%m-%d")
                     ],
 
-                    "Employee Name": [
+                    "Employee Name":[
                         employee
                     ],
 
-                    "Terminal Location": [
+                    "Terminal Location":[
                         terminal
                     ],
 
-                    "Paper Rolls Used": [
+                    "Paper Rolls Used":[
                         rolls_used
                     ],
 
-                    "Remaining Stock": [
+                    "Remaining Stock":[
                         remaining_stock
                     ]
                 })
@@ -280,12 +400,20 @@ with left:
                 st.success(
                     "✅ Usage Record Saved"
                 )
-                st.rerun()
 
+                if os.path.exists(
+                    "assets/success.mp3"
+                ):
+                    st.audio(
+                        "assets/success.mp3"
+                    )
+
+                st.rerun()
 
 # ==================================================
 # ADD STOCK
 # ==================================================
+
 with right:
 
     st.subheader("📦 Add New Stock")
@@ -301,49 +429,61 @@ with right:
         use_container_width=True
     ):
 
-        current = get_stock()
+        new_stock = (
+            get_stock()
+            + stock_to_add
+        )
 
-        new_stock = current + stock_to_add
-
-        update_stock(new_stock)
+        update_stock(
+            new_stock
+        )
 
         st.success(
             f"✅ {stock_to_add} rolls added successfully"
         )
+
         st.rerun()
 
+# ==================================================
+# TRANSACTIONS
+# ==================================================
 
 st.divider()
 
-# ==================================================
-# RECENT RECORDS
-# ==================================================
-st.subheader("📋 Recent Transactions")
+st.subheader(
+    "📋 Recent Transactions"
+)
 
 if not df.empty:
 
     st.dataframe(
-        df.tail(20),
+        df.head(20),
         use_container_width=True,
-        height=350
+        height=400
     )
 
 else:
 
-    st.info("No records available yet.")
+    st.info(
+        "No records available yet."
+    )
 
 # ==================================================
-# EMPLOYEE REPORT
+# REPORTS
 # ==================================================
+
 if not df.empty:
 
     st.divider()
 
-    st.subheader("👨‍💼 Employee Usage Report")
+    st.subheader(
+        "👨‍💼 Employee Usage Report"
+    )
 
     employee_report = (
-        df.groupby("Employee Name")
-        ["Paper Rolls Used"]
+        df.groupby(
+            "Employee Name"
+        )["Paper Rolls Used"]
         .sum()
         .reset_index()
     )
@@ -353,16 +493,40 @@ if not df.empty:
         use_container_width=True
     )
 
-    st.bar_chart(
-        employee_report.set_index(
-            "Employee Name"
-        )
+    fig = px.bar(
+        employee_report,
+        x="Employee Name",
+        y="Paper Rolls Used",
+        color="Paper Rolls Used",
+        template="plotly_dark",
+        text_auto=True
+    )
+
+    st.plotly_chart(
+        fig,
+        use_container_width=True
+    )
+
+    fig2 = px.pie(
+        employee_report,
+        names="Employee Name",
+        values="Paper Rolls Used",
+        hole=.5
+    )
+
+    st.plotly_chart(
+        fig2,
+        use_container_width=True
     )
 
 # ==================================================
-# DOWNLOAD REPORT
+# DOWNLOAD
 # ==================================================
-csv_data = df.to_csv(index=False).encode("utf-8")
+
+csv_data = (
+    df.to_csv(index=False)
+    .encode("utf-8")
+)
 
 st.download_button(
     label="📥 Download Usage Report",
