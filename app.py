@@ -104,7 +104,15 @@ def update_stock(stock):
 # LOAD DATA
 # ==================================================
 df = pd.read_sql(
-    'SELECT * FROM "Inventory"',
+    '''
+    SELECT
+        "Date",
+        "Employee Name",
+        "Terminal Location",
+        "Paper Rolls Used",
+        "Remaining Stock"
+    FROM "Inventory"
+    ''',
     engine
 )
 current_stock = get_stock()
