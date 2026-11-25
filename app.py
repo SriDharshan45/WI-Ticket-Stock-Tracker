@@ -76,6 +76,28 @@ TERMINAL_LOCATIONS = [
 
 
 # ==================================================
+# RESET USAGE FORM BEFORE WIDGET CREATION
+# IMPORTANT: KEEP THIS BEFORE THE FORM WIDGETS
+# ==================================================
+
+if st.session_state.get("reset_usage_form", False):
+
+    st.session_state["usage_date"] = (
+        pd.Timestamp.today().date()
+    )
+
+    st.session_state["employee_name"] = ""
+
+    st.session_state["terminal_location"] = (
+        TERMINAL_LOCATIONS[0]
+    )
+
+    st.session_state["rolls_used"] = 1
+
+    st.session_state["reset_usage_form"] = False
+
+
+# ==================================================
 # CREATE HISTORY TABLE
 # ==================================================
 
@@ -153,7 +175,7 @@ h1, h2, h3 {
 
 
 # ==================================================
-# DATABASE FUNCTIONS
+# LOAD INVENTORY
 # ==================================================
 
 def load_inventory():
@@ -172,6 +194,10 @@ def load_inventory():
     return pd.read_sql(query, engine)
 
 
+# ==================================================
+# GET CURRENT STOCK
+# ==================================================
+
 def get_stock():
 
     query = """
@@ -183,6 +209,7 @@ def get_stock():
     stock_df = pd.read_sql(query, engine)
 
     if stock_df.empty:
+
         raise ValueError("Stock record not found.")
 
     return int(stock_df.iloc[0]["current_stock"])
@@ -421,7 +448,7 @@ def revert_last_update():
 
         current_stock = int(stock_result[0])
 
-        # GET LATEST OPERATION
+        # GET LAST OPERATION
 
         history = conn.execute(
             text("""
@@ -450,10 +477,15 @@ def revert_last_update():
             )
 
         history_id = history[0]
+
         operation_type = history[1]
+
         previous_stock = int(history[2])
+
         updated_stock = int(history[3])
+
         inventory_id = history[4]
+
         is_reverted = history[5]
 
         if is_reverted:
@@ -462,7 +494,7 @@ def revert_last_update():
                 "Last update has already been reverted."
             )
 
-        # VERIFY CURRENT STOCK
+        # VERIFY STOCK
 
         if current_stock != updated_stock:
 
@@ -482,7 +514,7 @@ def revert_last_update():
             {"stock": previous_stock}
         )
 
-        # DELETE USAGE RECORD
+        # DELETE USAGE TRANSACTION
 
         if operation_type == "USAGE":
 
@@ -511,32 +543,15 @@ def revert_last_update():
         conn.execute(
             text("""
                 UPDATE inventory_history
+
                 SET is_reverted = TRUE
+
                 WHERE id = :history_id
             """),
             {"history_id": history_id}
         )
 
     return previous_stock, operation_type
-
-
-# ==================================================
-# RESET USAGE FORM FIELDS
-# ==================================================
-
-def reset_usage_fields():
-
-    st.session_state["usage_date"] = (
-        pd.Timestamp.today().date()
-    )
-
-    st.session_state["employee_name"] = ""
-
-    st.session_state["terminal_location"] = (
-        TERMINAL_LOCATIONS[0]
-    )
-
-    st.session_state["rolls_used"] = 1
 
 
 # ==================================================
@@ -758,7 +773,6 @@ with left:
 
         date = st.date_input(
             "Date",
-            value=pd.Timestamp.today().date(),
             key="usage_date"
         )
 
@@ -804,10 +818,6 @@ with left:
                     int(rolls_used)
                 )
 
-                # RESET ALL FIELDS AFTER SUCCESSFUL SAVE
-
-                reset_usage_fields()
-
                 st.success(
                     f"✅ Usage Record Saved! "
                     f"Remaining Stock: {remaining_stock}"
@@ -818,6 +828,11 @@ with left:
                     st.audio(
                         "assets/success.mp3"
                     )
+
+                # SET RESET FLAG ONLY
+                # DO NOT MODIFY WIDGET KEYS HERE
+
+                st.session_state["reset_usage_form"] = True
 
                 refresh_dashboard()
 
