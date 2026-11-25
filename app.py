@@ -65,6 +65,15 @@ except Exception as e:
 LOW_STOCK_THRESHOLD = 10
 MAX_STOCK = 40
 
+TERMINAL_LOCATIONS = [
+    "Nitheesh place RPS2",
+    "Abi Place RPS2",
+    "Sharon Place RPS2",
+    "GT1250",
+    "WI GT20",
+    "WV GT20"
+]
+
 
 # ==================================================
 # CREATE HISTORY TABLE
@@ -144,7 +153,7 @@ h1, h2, h3 {
 
 
 # ==================================================
-# FUNCTIONS
+# DATABASE FUNCTIONS
 # ==================================================
 
 def load_inventory():
@@ -174,23 +183,9 @@ def get_stock():
     stock_df = pd.read_sql(query, engine)
 
     if stock_df.empty:
-        return 0
+        raise ValueError("Stock record not found.")
 
     return int(stock_df.iloc[0]["current_stock"])
-
-
-def update_stock(new_stock):
-
-    with engine.begin() as conn:
-
-        conn.execute(
-            text("""
-                UPDATE stock
-                SET current_stock = :stock
-                WHERE id = 1
-            """),
-            {"stock": new_stock}
-        )
 
 
 # ==================================================
@@ -237,6 +232,8 @@ def add_usage_record(
 
     with engine.begin() as conn:
 
+        # LOCK STOCK RECORD
+
         stock_result = conn.execute(
             text("""
                 SELECT current_stock
@@ -247,7 +244,10 @@ def add_usage_record(
         ).fetchone()
 
         if stock_result is None:
-            raise ValueError("Stock record not found.")
+
+            raise ValueError(
+                "Stock record not found."
+            )
 
         previous_stock = int(stock_result[0])
 
@@ -270,7 +270,7 @@ def add_usage_record(
             {"stock": remaining_stock}
         )
 
-        # INSERT USAGE RECORD
+        # INSERT INVENTORY RECORD
 
         result = conn.execute(
             text("""
@@ -349,7 +349,10 @@ def add_new_stock(rolls_received):
         ).fetchone()
 
         if stock_result is None:
-            raise ValueError("Stock record not found.")
+
+            raise ValueError(
+                "Stock record not found."
+            )
 
         previous_stock = int(stock_result[0])
 
@@ -411,11 +414,14 @@ def revert_last_update():
         ).fetchone()
 
         if stock_result is None:
-            raise ValueError("Stock record not found.")
+
+            raise ValueError(
+                "Stock record not found."
+            )
 
         current_stock = int(stock_result[0])
 
-        # GET LATEST HISTORY
+        # GET LATEST OPERATION
 
         history = conn.execute(
             text("""
@@ -456,6 +462,8 @@ def revert_last_update():
                 "Last update has already been reverted."
             )
 
+        # VERIFY CURRENT STOCK
+
         if current_stock != updated_stock:
 
             raise ValueError(
@@ -463,7 +471,7 @@ def revert_last_update():
                 "Revert is not allowed."
             )
 
-        # RESTORE STOCK
+        # RESTORE PREVIOUS STOCK
 
         conn.execute(
             text("""
@@ -474,7 +482,7 @@ def revert_last_update():
             {"stock": previous_stock}
         )
 
-        # DELETE USAGE TRANSACTION
+        # DELETE USAGE RECORD
 
         if operation_type == "USAGE":
 
@@ -503,15 +511,32 @@ def revert_last_update():
         conn.execute(
             text("""
                 UPDATE inventory_history
-
                 SET is_reverted = TRUE
-
                 WHERE id = :history_id
             """),
             {"history_id": history_id}
         )
 
     return previous_stock, operation_type
+
+
+# ==================================================
+# RESET USAGE FORM FIELDS
+# ==================================================
+
+def reset_usage_fields():
+
+    st.session_state["usage_date"] = (
+        pd.Timestamp.today().date()
+    )
+
+    st.session_state["employee_name"] = ""
+
+    st.session_state["terminal_location"] = (
+        TERMINAL_LOCATIONS[0]
+    )
+
+    st.session_state["rolls_used"] = 1
 
 
 # ==================================================
@@ -526,12 +551,20 @@ def refresh_dashboard():
 
 
 # ==================================================
-# LOAD DATA
+# LOAD LATEST DATA
 # ==================================================
 
-df = load_inventory()
+try:
 
-current_stock = get_stock()
+    df = load_inventory()
+
+    current_stock = get_stock()
+
+except Exception as e:
+
+    st.error(f"Unable to load inventory: {e}")
+    st.stop()
+
 
 if df.empty:
 
@@ -620,7 +653,7 @@ with img2:
 
 
 # ==================================================
-# DASHBOARD
+# DASHBOARD METRICS
 # ==================================================
 
 col1, col2, col3, col4 = st.columns(4)
@@ -725,6 +758,7 @@ with left:
 
         date = st.date_input(
             "Date",
+            value=pd.Timestamp.today().date(),
             key="usage_date"
         )
 
@@ -735,14 +769,7 @@ with left:
 
         terminal = st.selectbox(
             "Terminal Location",
-            [
-                "Nitheesh place RPS2",
-                "Abi Place RPS2",
-                "Sharon Place RPS2",
-                "GT1250",
-                "WI GT20",
-                "WV GT20"
-            ],
+            TERMINAL_LOCATIONS,
             key="terminal_location"
         )
 
@@ -777,21 +804,9 @@ with left:
                     int(rolls_used)
                 )
 
-                # ==================================
-                # RESET ALL USAGE FIELDS
-                # ==================================
+                # RESET ALL FIELDS AFTER SUCCESSFUL SAVE
 
-                st.session_state["usage_date"] = (
-                    pd.Timestamp.today().date()
-                )
-
-                st.session_state["employee_name"] = ""
-
-                st.session_state["terminal_location"] = (
-                    "Nitheesh place RPS2"
-                )
-
-                st.session_state["rolls_used"] = 1
+                reset_usage_fields()
 
                 st.success(
                     f"✅ Usage Record Saved! "
@@ -861,7 +876,18 @@ st.divider()
 
 st.subheader("↩️ Undo Last Inventory Update")
 
-last_update = get_last_update()
+try:
+
+    last_update = get_last_update()
+
+except Exception as e:
+
+    st.error(
+        f"Unable to retrieve inventory history: {e}"
+    )
+
+    last_update = None
+
 
 if last_update is None:
 
@@ -880,9 +906,13 @@ else:
 
     operation = last_update["operation_type"]
 
-    previous_stock = last_update["previous_stock"]
+    previous_stock = int(
+        last_update["previous_stock"]
+    )
 
-    updated_stock = last_update["updated_stock"]
+    updated_stock = int(
+        last_update["updated_stock"]
+    )
 
     operation_name = (
         "Paper Roll Usage"
@@ -897,6 +927,8 @@ else:
         **Previous Stock:** {previous_stock}
 
         **Updated Stock:** {updated_stock}
+
+        **Stock Difference:** {abs(updated_stock - previous_stock)}
         """
     )
 
@@ -952,7 +984,7 @@ else:
 
 
 # ==================================================
-# EMPLOYEE REPORTS
+# EMPLOYEE USAGE REPORT
 # ==================================================
 
 if not df.empty:
@@ -984,7 +1016,8 @@ if not df.empty:
         y="Paper Rolls Used",
         color="Paper Rolls Used",
         template="plotly_dark",
-        text_auto=True
+        text_auto=True,
+        title="Employee-wise Paper Roll Usage"
     )
 
     st.plotly_chart(
@@ -998,7 +1031,8 @@ if not df.empty:
         employee_report,
         names="Employee Name",
         values="Paper Rolls Used",
-        hole=0.5
+        hole=0.5,
+        title="Paper Roll Usage Distribution"
     )
 
     st.plotly_chart(
