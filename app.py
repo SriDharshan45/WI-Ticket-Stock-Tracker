@@ -48,10 +48,12 @@ def get_engine():
 engine = get_engine()
 
 try:
+
     with engine.connect():
         pass
 
 except Exception as e:
+
     st.error(f"Database Connection Failed: {e}")
     st.stop()
 
@@ -90,14 +92,17 @@ def initialize_history():
     """
 
     with engine.begin() as conn:
+
         conn.execute(text(query))
 
 
 try:
+
     initialize_history()
 
 except Exception as e:
-    st.error(f"Unable to initialize inventory history: {e}")
+
+    st.error(f"Unable to initialize history table: {e}")
     st.stop()
 
 
@@ -117,6 +122,7 @@ st.markdown("""
 }
 
 [data-testid="metric-container"] {
+
     background: linear-gradient(
         135deg,
         #1E293B,
@@ -219,7 +225,7 @@ def get_last_update():
 
 
 # ==================================================
-# ADD USAGE WITH HISTORY
+# ADD USAGE RECORD
 # ==================================================
 
 def add_usage_record(
@@ -230,8 +236,6 @@ def add_usage_record(
 ):
 
     with engine.begin() as conn:
-
-        # Lock stock record
 
         stock_result = conn.execute(
             text("""
@@ -248,13 +252,14 @@ def add_usage_record(
         previous_stock = int(stock_result[0])
 
         if rolls_used > previous_stock:
+
             raise ValueError(
                 f"Only {previous_stock} rolls available."
             )
 
         remaining_stock = previous_stock - rolls_used
 
-        # Update stock
+        # UPDATE STOCK
 
         conn.execute(
             text("""
@@ -265,7 +270,7 @@ def add_usage_record(
             {"stock": remaining_stock}
         )
 
-        # Insert inventory record
+        # INSERT USAGE RECORD
 
         result = conn.execute(
             text("""
@@ -298,7 +303,7 @@ def add_usage_record(
 
         inventory_id = result.scalar_one()
 
-        # Save history
+        # SAVE HISTORY
 
         conn.execute(
             text("""
@@ -327,7 +332,7 @@ def add_usage_record(
 
 
 # ==================================================
-# ADD STOCK WITH HISTORY
+# ADD NEW STOCK
 # ==================================================
 
 def add_new_stock(rolls_received):
@@ -350,7 +355,7 @@ def add_new_stock(rolls_received):
 
         new_stock = previous_stock + rolls_received
 
-        # Update stock
+        # UPDATE STOCK
 
         conn.execute(
             text("""
@@ -361,7 +366,7 @@ def add_new_stock(rolls_received):
             {"stock": new_stock}
         )
 
-        # Save history
+        # SAVE HISTORY
 
         conn.execute(
             text("""
@@ -394,7 +399,7 @@ def revert_last_update():
 
     with engine.begin() as conn:
 
-        # Lock stock record
+        # LOCK STOCK
 
         stock_result = conn.execute(
             text("""
@@ -410,7 +415,7 @@ def revert_last_update():
 
         current_stock = int(stock_result[0])
 
-        # Get latest operation
+        # GET LATEST HISTORY
 
         history = conn.execute(
             text("""
@@ -433,7 +438,10 @@ def revert_last_update():
         ).fetchone()
 
         if history is None:
-            raise ValueError("No inventory update available to revert.")
+
+            raise ValueError(
+                "No inventory update available to revert."
+            )
 
         history_id = history[0]
         operation_type = history[1]
@@ -443,18 +451,19 @@ def revert_last_update():
         is_reverted = history[5]
 
         if is_reverted:
-            raise ValueError("Last update has already been reverted.")
 
-        # Prevent undo if another stock change occurred
-        # outside the tracked history.
+            raise ValueError(
+                "Last update has already been reverted."
+            )
 
         if current_stock != updated_stock:
+
             raise ValueError(
                 "Stock has changed since the last operation. "
                 "Revert is not allowed."
             )
 
-        # Restore previous stock
+        # RESTORE STOCK
 
         conn.execute(
             text("""
@@ -465,12 +474,15 @@ def revert_last_update():
             {"stock": previous_stock}
         )
 
-        # If usage operation, delete its transaction
+        # DELETE USAGE TRANSACTION
 
         if operation_type == "USAGE":
 
             if inventory_id is None:
-                raise ValueError("Usage transaction ID is missing.")
+
+                raise ValueError(
+                    "Usage transaction ID is missing."
+                )
 
             delete_result = conn.execute(
                 text("""
@@ -481,11 +493,12 @@ def revert_last_update():
             )
 
             if delete_result.rowcount != 1:
+
                 raise ValueError(
                     "Original usage transaction was not found."
                 )
 
-        # Mark operation as reverted
+        # MARK AS REVERTED
 
         conn.execute(
             text("""
@@ -587,7 +600,7 @@ with img2:
                 use_container_width=True
             )
 
-    elif current_stock > 10:
+    elif current_stock > LOW_STOCK_THRESHOLD:
 
         if os.path.exists("assets/warning.png"):
 
@@ -710,10 +723,14 @@ with left:
 
     with st.form("usage_form"):
 
-        date = st.date_input("Date")
+        date = st.date_input(
+            "Date",
+            key="usage_date"
+        )
 
         employee = st.text_input(
-            "Employee Name"
+            "Employee Name",
+            key="employee_name"
         )
 
         terminal = st.selectbox(
@@ -725,14 +742,16 @@ with left:
                 "GT1250",
                 "WI GT20",
                 "WV GT20"
-            ]
+            ],
+            key="terminal_location"
         )
 
         rolls_used = st.number_input(
             "Paper Rolls Used",
             min_value=1,
+            value=1,
             step=1,
-            value=1
+            key="rolls_used"
         )
 
         submit_usage = st.form_submit_button(
@@ -758,8 +777,24 @@ with left:
                     int(rolls_used)
                 )
 
+                # ==================================
+                # RESET ALL USAGE FIELDS
+                # ==================================
+
+                st.session_state["usage_date"] = (
+                    pd.Timestamp.today().date()
+                )
+
+                st.session_state["employee_name"] = ""
+
+                st.session_state["terminal_location"] = (
+                    "Nitheesh place RPS2"
+                )
+
+                st.session_state["rolls_used"] = 1
+
                 st.success(
-                    f"✅ Usage Record Saved. "
+                    f"✅ Usage Record Saved! "
                     f"Remaining Stock: {remaining_stock}"
                 )
 
@@ -770,10 +805,6 @@ with left:
                     )
 
                 refresh_dashboard()
-
-            except ValueError as e:
-
-                st.error(str(e))
 
             except Exception as e:
 
@@ -793,8 +824,9 @@ with right:
     stock_to_add = st.number_input(
         "Number of Rolls Received",
         min_value=1,
+        value=1,
         step=1,
-        value=1
+        key="stock_to_add"
     )
 
     if st.button(
@@ -852,11 +884,11 @@ else:
 
     updated_stock = last_update["updated_stock"]
 
-    if operation == "USAGE":
-        operation_name = "Paper Roll Usage"
-
-    else:
-        operation_name = "New Stock Addition"
+    operation_name = (
+        "Paper Roll Usage"
+        if operation == "USAGE"
+        else "New Stock Addition"
+    )
 
     st.warning(
         f"""
@@ -865,8 +897,6 @@ else:
         **Previous Stock:** {previous_stock}
 
         **Updated Stock:** {updated_stock}
-
-        **Stock Difference:** {updated_stock - previous_stock}
         """
     )
 
@@ -922,7 +952,7 @@ else:
 
 
 # ==================================================
-# REPORTS
+# EMPLOYEE REPORTS
 # ==================================================
 
 if not df.empty:
@@ -1001,5 +1031,6 @@ st.download_button(
 st.divider()
 
 st.caption(
-    "Wisconsin Paper Roll Inventory Tracker"
+    "Wisconsin Paper Roll Inventory Tracker | "
+    "Real-Time Inventory Management"
 )
